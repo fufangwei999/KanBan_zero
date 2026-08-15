@@ -1,4 +1,4 @@
-"""帅帅看板 冒烟测试（回归）。
+"""Zero看板 冒烟测试（回归）。
 
 运行方式（项目根目录）：
     venv\\Scripts\\python tests/test_smoke.py

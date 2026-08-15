@@ -49,7 +49,7 @@ class MainWindow(QMainWindow):
         self.current_date = date.today()
         self._last_seen_today = date.today()
         self._selected_todo_id = None
-        self.setWindowTitle("帅帅看板")
+        self.setWindowTitle("Zero看板")
         self.resize(1000, 920)
         self._build_ui()
         self._setup_shortcuts()
@@ -105,7 +105,7 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(14, 10, 14, 10)
         lay.setSpacing(8)
 
-        title = QLabel("🍂 帅帅看板")
+        title = QLabel("🍂 Zero看板")
         title.setObjectName("appTitle")
         lay.addWidget(title)
         lay.addSpacing(10)
@@ -735,7 +735,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------ 托盘 + 全局热键
     def _setup_tray(self) -> None:
         self.tray = QSystemTrayIcon(self._make_tray_icon(), self)
-        self.tray.setToolTip("帅帅看板 · Ctrl+J 召唤")
+        self.tray.setToolTip("Zero看板 · Ctrl+J 召唤")
         menu = QMenu()
         menu.addAction("显示看板", self.show_window)
         menu.addSeparator()
@@ -773,7 +773,7 @@ class MainWindow(QMainWindow):
         )
         if not self._hotkey_registered:
             self.tray.showMessage(
-                "帅帅看板", "全局热键 Ctrl+J 注册失败（可能被其他程序占用）",
+                "Zero看板", "全局热键 Ctrl+J 注册失败（可能被其他程序占用）",
                 QSystemTrayIcon.Warning, 3000,
             )
 
@@ -865,7 +865,7 @@ class MainWindow(QMainWindow):
                 msgs.append(f"「{t.title}」已逾期")
         if msgs:
             self.tray.showMessage(
-                "帅帅看板 · 到期提醒", "\n".join(msgs[:5]), QSystemTrayIcon.Warning, 6000
+                "Zero看板 · 到期提醒", "\n".join(msgs[:5]), QSystemTrayIcon.Warning, 6000
             )
 
     # ------------------------------------------------------------ 智能添加
@@ -913,4 +913,4 @@ class MainWindow(QMainWindow):
         # 关闭按钮 → 隐藏到托盘，Ctrl+J 可随时召唤
         event.ignore()
         self.hide()
-        self.tray.showMessage("帅帅看板", "已隐藏到托盘，Ctrl+J 召唤", QSystemTrayIcon.Information, 2000)
+        self.tray.showMessage("Zero看板", "已隐藏到托盘，Ctrl+J 召唤", QSystemTrayIcon.Information, 2000)

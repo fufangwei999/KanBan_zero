@@ -1,4 +1,4 @@
-"""帅帅看板 入口。"""
+"""Zero看板 入口。"""
 import ctypes
 import os
 import sys
@@ -146,7 +146,7 @@ def main() -> None:
 
     # 让 Windows 任务栏用自定义图标分组（而非 python.exe 图标）
     try:
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("shuaishuai.kanban")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("zero.kanban")
     except Exception:
         pass
 
