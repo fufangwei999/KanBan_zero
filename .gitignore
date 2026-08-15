@@ -1,0 +1,22 @@
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+
+# 虚拟环境（665MB，不推）
+venv/
+.venv/
+
+# 应用数据（含用户待办与 AI API key，敏感，绝不提交）
+data/
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+
+# 系统文件
+Thumbs.db
+.DS_Store

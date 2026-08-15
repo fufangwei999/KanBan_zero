@@ -1,0 +1,72 @@
+# 🍂 帅帅看板
+
+一个桌面待办看板应用，Python + PySide6 开发，本地 SQLite 存储，零外部依赖。
+
+## 功能
+
+- **待办管理**：添加 / 编辑 / 删除待办，支持标题、描述、优先级（高/中/低）、期望完成时间（非必填）、分类标签。
+- **三区看板**：上方「📋 待办」、中间「🔄 进行中」、下方「✅ 已完成」，新增任务自动进待办区。
+- **三态流转**：待办 → 进行中（▶ 开始）→ 已完成（✓ 完成），可随时退回；拖拽卡片跨区切换状态。
+- **键盘快捷键**：`Ctrl+N` 添加待办、`1/2/3` 切换选中任务状态、`Del` 删除选中任务。
+- **Ctrl+J 全局召唤**：任何界面按 `Ctrl+J` 召唤/隐藏看板窗口；关闭按钮最小化到系统托盘常驻。
+- **统计概览**：顶部实时显示待办 / 进行中 / 已完成计数 + 逾期数。
+- **日期看板**：顶部切换日期（只能选过去和当日，未来禁用）。
+- **任务滚动**：未完成任务（待办/进行中）跨日期滚动，标注原创建日期（📌）；完成记「完成当天」。
+- **自动跨天**：过了 24 点自动进入新日期。
+- **日报 / 周报**：日报=当日新建+当日完成；周报=本周完成+未完成遗留；可复制、导出 Markdown。
+- **AI 智能总结**：配置 OpenAI 兼容接口的模型（DeepSeek / OpenAI / 本地 Ollama 等），用 AI 生成日报/周报总结。**添加 key 即可接入新模型**。
+
+## 运行
+
+双击 `start.bat`（首次自动安装依赖），或手动：
+
+```bash
+py -3.12 -m venv venv
+venv\Scripts\python -m pip install -r requirements.txt
+venv\Scripts\python main.py
+```
+
+## 测试
+
+```bash
+venv\Scripts\python -m pip install -r requirements-dev.txt
+venv\Scripts\python -m pytest
+```
+
+覆盖数据层 CRUD、任务滚动、日报/周报双维度、完成/撤销、浅色调色板等回归用例（17 项）。
+
+## AI 模型配置
+
+工具栏点「🤖 AI 模型」→「＋ 添加」：
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| 名称 | 显示名 | DeepSeek |
+| Base URL | 接口地址（OpenAI 兼容） | `https://api.deepseek.com/v1` |
+| API Key | 服务商密钥（本地 Ollama 随意填） | `sk-...` / `ollama` |
+| 模型名 | 模型标识 | `deepseek-chat` / `qwen3:8b` |
+
+内置预设：DeepSeek、OpenAI、本地 Ollama，选预设后只需填 key。
+
+## 数据存储
+
+数据保存在项目目录 `data/kanban.db`（SQLite），删除即重置。备份时复制该文件即可。
+
+## 项目结构
+
+```
+kanban/
+├── main.py                  # 入口 + 浅色调色板 + 全局样式
+├── start.bat                # 一键启动
+├── requirements.txt
+├── tests/test_smoke.py      # 冒烟回归测试
+└── app/
+    ├── database.py          # SQLite 数据层（分类 / 待办三态 / AI 模型）
+    ├── ai.py                # OpenAI 兼容接口调用 + 报告提示词
+    └── ui/
+        ├── main_window.py   # 主窗口 + 日期导航 + 三区 + 日报周报
+        ├── board.py         # 三区列表（拖拽切换状态）
+        ├── card.py          # 待办卡片（三态按钮）
+        └── dialogs.py       # 各类对话框
+```
+"# KanBan_zero" 
