@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QTextEdit,
     QVBoxLayout,
+    QWidget,
 )
 
 from .. import ai as ai_module
@@ -114,6 +115,7 @@ class TodoDialog(QDialog):
         self.attach_list = QListWidget()
         self.attach_list.setFixedHeight(96)
         self.attach_list.setSelectionMode(QListWidget.SingleSelection)
+        self.attach_list.itemDoubleClicked.connect(lambda item: self._download_attachment_idx(self.attach_list.row(item)))
         form.addRow("", self.attach_list)
         attach_row = QHBoxLayout()
         add_attach_btn = QPushButton("＋ 添加附件")
@@ -216,18 +218,55 @@ class TodoDialog(QDialog):
     def _refresh_attachments(self) -> None:
         self.attach_list.clear()
         for a in self.attachments:
-            size = _fmt_size(a.get("file_size", 0))
             if a.get("summary"):
-                label = f"📄 {a['file_name']}  ·  {size}  ·  ✨ {a['summary']}"
+                label = f"📄 {a['file_name']}  ·  {_fmt_size(a.get('file_size', 0))}  ·  ✨ {a['summary']}"
             else:
                 ext = os.path.splitext(a["file_name"])[1].lower()
                 if ext in (".docx", ".txt", ".md", ".markdown"):
-                    label = f"📄 {a['file_name']}  ·  {size}  ·  ⏳ 待 AI 总结"
+                    label = f"📄 {a['file_name']}  ·  {_fmt_size(a.get('file_size', 0))}  ·  ⏳ 待 AI 总结"
                 else:
-                    label = f"📄 {a['file_name']}  ·  {size}"
+                    label = f"📄 {a['file_name']}  ·  {_fmt_size(a.get('file_size', 0))}"
             item = QListWidgetItem(label)
-            item.setToolTip(label)
+            item.setToolTip("双击附件可直接下载")
             self.attach_list.addItem(item)
+
+            # 行内放「⬇ 下载」小按钮
+            row = QWidget()
+            lay = QHBoxLayout(row)
+            lay.setContentsMargins(4, 2, 6, 2)
+            lay.setSpacing(6)
+            text = QLabel(label)
+            text.setWordWrap(True)
+            text.setStyleSheet("color:#1f2937;font-size:12px;border:none;background:transparent;")
+            lay.addWidget(text, 1)
+            btn = QPushButton("⬇ 下载")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(
+                "QPushButton{border:1px solid #4a90d9;border-radius:4px;"
+                "background:#eef4ff;color:#4a90d9;font-size:11px;padding:2px 8px;}"
+                "QPushButton:hover{background:#dcebff;}"
+            )
+            btn.clicked.connect(lambda _=False, idx=len(self.attachments) - 1: self._download_attachment_idx(idx))
+            lay.addWidget(btn, 0, Qt.AlignTop)
+            self.attach_list.setItemWidget(item, row)
+
+    def _download_attachment_idx(self, idx: int) -> None:
+        if not (0 <= idx < len(self.attachments)):
+            return
+        a = self.attachments[idx]
+        if not a.get("stored_path") or not os.path.isfile(a["stored_path"]):
+            QMessageBox.information(self, "提示", "该附件尚未保存（保存待办后即可下载）")
+            return
+        target, _ = QFileDialog.getSaveFileName(
+            self, "下载附件", a["file_name"], "所有文件 (*.*)"
+        )
+        if target:
+            try:
+                import shutil
+                shutil.copy2(a["stored_path"], target)
+                QMessageBox.information(self, "下载完成", f"已保存到：\n{target}")
+            except OSError as e:
+                QMessageBox.warning(self, "下载失败", str(e))
 
     def _add_attachment(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
@@ -245,22 +284,9 @@ class TodoDialog(QDialog):
     def _download_attachment(self) -> None:
         row = self.attach_list.currentRow()
         if not (0 <= row < len(self.attachments)):
-            QMessageBox.information(self, "提示", "请先选中一个附件")
+            QMessageBox.information(self, "提示", "请先选中一个附件（或双击附件行）")
             return
-        a = self.attachments[row]
-        if not a.get("stored_path") or not os.path.isfile(a["stored_path"]):
-            QMessageBox.information(self, "提示", "该附件尚未保存（保存待办后即可下载）")
-            return
-        target, _ = QFileDialog.getSaveFileName(
-            self, "下载附件", a["file_name"], "所有文件 (*.*)"
-        )
-        if target:
-            try:
-                import shutil
-                shutil.copy2(a["stored_path"], target)
-                QMessageBox.information(self, "下载完成", f"已保存到：\n{target}")
-            except OSError as e:
-                QMessageBox.warning(self, "下载失败", str(e))
+        self._download_attachment_idx(row)
 
     def _remove_attachment(self) -> None:
         row = self.attach_list.currentRow()

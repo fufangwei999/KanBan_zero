@@ -10,6 +10,7 @@ class TodoListWidget(QListWidget):
     status_requested = Signal(int, str)  # todo_id, new_status
     edit_requested = Signal(int)         # todo_id
     delete_requested = Signal(int)       # todo_id
+    download_requested = Signal(int, int)  # todo_id, attachment_id
     selected = Signal(int)               # todo_id，当前选中
 
     def __init__(self, target_status: str, parent=None):
@@ -58,6 +59,7 @@ class TodoListWidget(QListWidget):
         card.status_requested.connect(self.status_requested)
         card.edit_requested.connect(self.edit_requested)
         card.delete_requested.connect(self.delete_requested)
+        card.download_requested.connect(self.download_requested)
 
         item = QListWidgetItem()
         item.setData(Qt.UserRole, todo.id)

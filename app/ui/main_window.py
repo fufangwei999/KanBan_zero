@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QCalendarWidget,
     QComboBox,
     QDialog,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QInputDialog,
@@ -285,6 +286,7 @@ class MainWindow(QMainWindow):
             lst.edit_requested.connect(self.on_edit_todo)
             lst.delete_requested.connect(self.on_delete_todo)
             lst.item_dropped.connect(self.on_item_dropped)
+            lst.download_requested.connect(self.on_download_attachment)
             lst.selected.connect(self._on_selected)
             self.content_layout.addWidget(header)
             self.content_layout.addWidget(lst)
@@ -395,16 +397,27 @@ class MainWindow(QMainWindow):
         attachments 元素：
           - 新增：{"src_path":..., "file_name":..., ...}
           - 已有：{"id":..., "stored_path":..., ...}
+        附件保存失败时弹窗告知（不静默），任务本身仍保存成功。
         """
         kept_ids = set()
+        failed = []
         for a in attachments:
             if a.get("id") is not None:
                 kept_ids.add(a["id"])
             elif a.get("src_path") and os.path.isfile(a["src_path"]):
-                self.db.add_attachment(todo_id, a["src_path"])
+                try:
+                    self.db.add_attachment(todo_id, a["src_path"])
+                except Exception as e:
+                    failed.append(f"{a.get('file_name', '?')}：{e}")
         for exist in self.db.list_attachments(todo_id):
             if exist.id not in kept_ids:
                 self.db.delete_attachment(exist.id)
+        if failed:
+            QMessageBox.warning(
+                self, "部分附件保存失败",
+                "以下附件未能保存：\n\n" + "\n".join(failed) +
+                "\n\n请确认文件未被占用或移动后重试。",
+            )
 
     def _auto_summarize_attachments(self, todo_id: int) -> None:
         """docx/txt 附件且尚无摘要 → 后台线程调 AI 生成 1-2 句精髓。
@@ -432,6 +445,26 @@ class MainWindow(QMainWindow):
                     print(f"[Zero看板] 附件 AI 总结失败: {a.file_name}: {e}")
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def on_download_attachment(self, todo_id: int, attach_id: int) -> None:
+        """卡片上点「⬇」直接下载对应附件。"""
+        att = next((a for a in self.db.list_attachments(todo_id) if a.id == attach_id), None)
+        if not att:
+            QMessageBox.information(self, "提示", "附件不存在（可能已被移除）")
+            return
+        if not os.path.isfile(att.stored_path):
+            QMessageBox.warning(self, "提示", "附件文件已丢失，无法下载")
+            return
+        target, _ = QFileDialog.getSaveFileName(
+            self, "下载附件", att.file_name, "所有文件 (*.*)"
+        )
+        if target:
+            try:
+                import shutil
+                shutil.copy2(att.stored_path, target)
+                QMessageBox.information(self, "下载完成", f"已保存到：\n{target}")
+            except OSError as e:
+                QMessageBox.warning(self, "下载失败", str(e))
 
     def on_delete_todo(self, todo_id: int) -> None:
         todo = self.db.get_todo(todo_id)

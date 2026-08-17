@@ -331,6 +331,43 @@ class UiTest(unittest.TestCase):
         finally:
             os.remove(src)
 
+    def test_todo_dialog_attachment_download(self):
+        """附件行内下载按钮 + 双击下载逻辑（不弹真实文件对话框）。"""
+        db, path = _tmp_db()
+        try:
+            cats = db.list_categories()
+        finally:
+            db.close()
+            os.remove(path)
+        # 造一个已保存的附件（stored_path 指向真实临时文件）
+        real = tempfile.mktemp(suffix=".pdf")
+        with open(real, "wb") as f:
+            f.write(b"%PDF-1.4 test attachment")
+        from app.database import Attachment as Att
+        exist = Att(9, 1, "文档.pdf", real, 24, "", "2026-08-17 10:00:00")
+        dlg = TodoDialog(cats, attachments=[exist])
+        self.assertEqual(dlg.attach_list.count(), 1)
+        # 行内按钮存在（itemWidget 非空）
+        item = dlg.attach_list.item(0)
+        self.assertIsNotNone(dlg.attach_list.itemWidget(item))
+        # 下载逻辑：monkeypatch QFileDialog.getSaveFileName → 返回目标路径
+        target = tempfile.mktemp(suffix=".pdf")
+        from PySide6.QtWidgets import QFileDialog as _QFD, QMessageBox as _QMB
+        orig_gf = _QFD.getSaveFileName
+        orig_mb = _QMB.information
+        _QFD.getSaveFileName = staticmethod(lambda *a, **k: (target, ""))
+        _QMB.information = staticmethod(lambda *a, **k: None)  # 模态弹窗在 offscreen 下会阻塞，跳过
+        try:
+            dlg._download_attachment_idx(0)
+            self.assertTrue(os.path.isfile(target))
+            with open(target, "rb") as f:
+                self.assertIn(b"test attachment", f.read())
+        finally:
+            _QFD.getSaveFileName = orig_gf
+            _QMB.information = orig_mb
+            os.remove(target)
+            os.remove(real)
+
     def test_calendar_view(self):
         from app.ui.calendar_view import CalendarView
 

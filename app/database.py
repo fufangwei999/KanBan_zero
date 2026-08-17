@@ -474,6 +474,7 @@ class Database:
         """复制文件到 data/attachments/<todo_id>/ 并入库。
 
         src_path 不存在时返回 None。同名文件自动加序号（不覆盖）。
+        复制/入库失败时抛出带上下文信息的异常（不静默失败）。
         """
         if not os.path.isfile(src_path):
             return None
@@ -487,14 +488,34 @@ class Database:
         while os.path.exists(stored):
             stored = os.path.join(folder, f"{base} ({n}){ext}")
             n += 1
-        shutil.copy2(src_path, stored)
+        try:
+            shutil.copy2(src_path, stored)
+        except OSError as e:
+            # 复制失败：清理可能残留的半成品文件，避免空目录假象
+            try:
+                if os.path.exists(stored):
+                    os.remove(stored)
+                if os.path.isdir(folder) and not os.listdir(folder):
+                    os.rmdir(folder)
+            except OSError:
+                pass
+            raise OSError(f"附件复制失败（{file_name}）: {e}") from e
         size = os.path.getsize(stored)
-        cur = self.conn.execute(
-            "INSERT INTO attachments(todo_id, file_name, stored_path, file_size, summary, created_at)"
-            " VALUES(?,?,?,?,?,?)",
-            (todo_id, file_name, stored, size, summary, now_str()),
-        )
-        self.conn.commit()
+        try:
+            cur = self.conn.execute(
+                "INSERT INTO attachments(todo_id, file_name, stored_path, file_size, summary, created_at)"
+                " VALUES(?,?,?,?,?,?)",
+                (todo_id, file_name, stored, size, summary, now_str()),
+            )
+            self.conn.commit()
+        except Exception:
+            # 入库失败：删除已复制的文件，保持一致性
+            try:
+                if os.path.isfile(stored):
+                    os.remove(stored)
+            except OSError:
+                pass
+            raise
         return Attachment(id=cur.lastrowid, todo_id=todo_id, file_name=file_name,
                           stored_path=stored, file_size=size, summary=summary,
                           created_at=now_str())

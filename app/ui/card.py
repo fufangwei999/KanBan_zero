@@ -26,6 +26,7 @@ class CardWidget(QFrame):
     status_requested = Signal(int, str)  # todo_id, new_status
     edit_requested = Signal(int)         # todo_id
     delete_requested = Signal(int)       # todo_id
+    download_requested = Signal(int, int)  # todo_id, attachment_id
 
     def __init__(self, todo: Todo, category_name: str, category_color: str,
                  current_date: str, subtasks=None, attachments=None, parent=None):
@@ -109,17 +110,32 @@ class CardWidget(QFrame):
 
         # 附件信息
         if self.attachments:
-            attach_texts = []
             for a in self.attachments:
+                row = QHBoxLayout()
+                row.setSpacing(6)
+                attach_lbl = QLabel(f"📎 {a.file_name}")
+                attach_lbl.setWordWrap(True)
+                attach_lbl.setStyleSheet("color:#8a94a6;font-size:11px;")
                 if a.summary:
-                    attach_texts.append(f"📎 {a.file_name} ✨{a.summary}")
-                else:
-                    attach_texts.append(f"📎 {a.file_name}")
-            attach_lbl = QLabel("　".join(attach_texts))
-            attach_lbl.setWordWrap(True)
-            attach_lbl.setStyleSheet("color:#8a94a6;font-size:11px;")
-            attach_lbl.setToolTip("\n".join(attach_texts))
-            inner.addWidget(attach_lbl)
+                    attach_lbl.setToolTip(f"✨ {a.summary}")
+                    attach_lbl.setStyleSheet(
+                        "color:#8a94a6;font-size:11px;border-bottom:1px dashed #c4ccd6;"
+                    )
+                row.addWidget(attach_lbl, 1)
+                dl_btn = QToolButton()
+                dl_btn.setText("⬇")
+                dl_btn.setToolTip(f"下载 {a.file_name}")
+                dl_btn.setCursor(Qt.PointingHandCursor)
+                dl_btn.setStyleSheet(
+                    "QToolButton{border:1px solid #d7dce3;border-radius:4px;"
+                    "background:#ffffff;color:#4a90d9;font-size:12px;padding:1px 6px;}"
+                    "QToolButton:hover{background:#eef4ff;border-color:#4a90d9;}"
+                )
+                dl_btn.clicked.connect(
+                    lambda _=False, aid=a.id: self.download_requested.emit(self.todo.id, aid)
+                )
+                row.addWidget(dl_btn, 0, Qt.AlignTop)
+                inner.addLayout(row)
 
         # 日期信息行
         info = QHBoxLayout()
