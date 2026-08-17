@@ -7,6 +7,7 @@ import json
 import re
 import urllib.error
 import urllib.request
+import zipfile
 from typing import List, Optional
 
 from .database import AiModel, Todo, PRIORITY_LABELS
@@ -176,3 +177,63 @@ def parse_natural_language_todo(model_cfg: AiModel, text: str, categories, today
         "due_date": due,
         "category": category,
     }
+
+
+# ---------------------------------------------------------------- 附件总结
+MAX_EXTRACT_CHARS = 8000  # 送给 AI 的文本上限（避免超长与高额 token）
+
+
+def extract_text_from_file(file_path: str, file_name: str) -> str:
+    """从 docx / txt / md 附件中提取纯文本（纯标准库实现）。
+
+    - .docx：zipfile 读 word/document.xml，解析 <w:t> 文本
+    - .txt / .md：直接按 utf-8 读（失败回退 gbk）
+    - 其他格式：返回空字符串（不支持自动总结）
+    """
+    name = (file_name or "").lower()
+    try:
+        if name.endswith(".docx"):
+            with zipfile.ZipFile(file_path) as zf:
+                xml = zf.read("word/document.xml").decode("utf-8", errors="replace")
+            # 按段落拆，保留换行；<w:t> 里的文本拼起来
+            paras = re.findall(r"<w:p[ >].*?</w:p>", xml, re.DOTALL)
+            lines = []
+            for p in paras:
+                texts = re.findall(r"<w:t[^>]*>(.*?)</w:t>", p, re.DOTALL)
+                line = "".join(texts)
+                line = line.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+                if line.strip():
+                    lines.append(line.strip())
+            return "\n".join(lines)[:MAX_EXTRACT_CHARS]
+        if name.endswith((".txt", ".md", ".markdown")):
+            for enc in ("utf-8", "gbk", "utf-16"):
+                try:
+                    with open(file_path, "r", encoding=enc) as f:
+                        return f.read()[:MAX_EXTRACT_CHARS]
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
+        return ""
+    except Exception:
+        return ""
+
+
+def summarize_attachment(model_cfg: AiModel, file_path: str, file_name: str) -> str:
+    """用 AI 把附件总结成 1-2 句「文件精髓」。
+
+    仅支持 docx / txt / md；其他格式或提取不到文本时抛 AiError。
+    """
+    text = extract_text_from_file(file_path, file_name)
+    if not text.strip():
+        raise AiError("该附件不是 docx/txt 格式或无法读取内容，无法自动总结")
+    system = (
+        "你是文档速读助手。请用 1-2 句中文概括文件的精髓：核心内容、关键结论或用途，"
+        "让用户不看原文也能知道这个文件是干什么的。不要罗列细节，不要超过 2 句。"
+    )
+    user = f"文件名：{file_name}\n\n文件内容（节选）：\n{text[:MAX_EXTRACT_CHARS]}\n\n请给出 1-2 句精髓总结。"
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+    return call_chat_completion(
+        model_cfg.base_url, model_cfg.api_key, model_cfg.model, messages, temperature=0.3
+    )

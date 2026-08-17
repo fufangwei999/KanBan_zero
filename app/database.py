@@ -14,6 +14,12 @@ from typing import List, Optional
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(PROJECT_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "kanban.db")
+ATTACH_DIR = os.path.join(DATA_DIR, "attachments")
+
+
+def attach_dir_for(db_path: str) -> str:
+    """附件根目录跟随数据库文件（测试用临时库时自动隔离到临时目录）。"""
+    return os.path.join(os.path.dirname(os.path.abspath(db_path)), "attachments")
 
 
 def now_str() -> str:
@@ -57,6 +63,17 @@ class Subtask:
 
 
 @dataclass
+class Attachment:
+    id: int
+    todo_id: int
+    file_name: str
+    stored_path: str
+    file_size: int = 0
+    summary: str = ""          # AI 摘要（docx/txt）
+    created_at: str = ""
+
+
+@dataclass
 class AiModel:
     id: int
     name: str
@@ -76,6 +93,7 @@ class Database:
 
     def __init__(self, path: str = DB_PATH):
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        self.path = path
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
@@ -124,6 +142,16 @@ class Database:
                 title TEXT NOT NULL,
                 done INTEGER NOT NULL DEFAULT 0,
                 sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT,
+                FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS attachments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                todo_id INTEGER NOT NULL,
+                file_name TEXT NOT NULL,
+                stored_path TEXT NOT NULL,
+                file_size INTEGER NOT NULL DEFAULT 0,
+                summary TEXT NOT NULL DEFAULT '',
                 created_at TEXT,
                 FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
             );
@@ -425,6 +453,88 @@ class Database:
         self.conn.execute("DELETE FROM subtasks WHERE todo_id=?", (todo_id,))
         self.conn.commit()
 
+    # ---------- 附件 ----------
+    def list_attachments(self, todo_id: int) -> List[Attachment]:
+        rows = self.conn.execute(
+            "SELECT * FROM attachments WHERE todo_id=? ORDER BY id ASC",
+            (todo_id,),
+        ).fetchall()
+        return [Attachment(**dict(r)) for r in rows]
+
+    def attachments_map(self) -> dict:
+        """返回 {todo_id: [Attachment, ...]} 映射，供看板批量加载。"""
+        rows = self.conn.execute("SELECT * FROM attachments ORDER BY id ASC").fetchall()
+        m = {}
+        for r in rows:
+            a = Attachment(**dict(r))
+            m.setdefault(a.todo_id, []).append(a)
+        return m
+
+    def add_attachment(self, todo_id: int, src_path: str, summary: str = "") -> Optional[Attachment]:
+        """复制文件到 data/attachments/<todo_id>/ 并入库。
+
+        src_path 不存在时返回 None。同名文件自动加序号（不覆盖）。
+        """
+        if not os.path.isfile(src_path):
+            return None
+        file_name = os.path.basename(src_path) or "attachment"
+        folder = os.path.join(attach_dir_for(self.path), str(todo_id))
+        os.makedirs(folder, exist_ok=True)
+        # 同名冲突 → 追加 (1)、(2)
+        base, ext = os.path.splitext(file_name)
+        stored = os.path.join(folder, file_name)
+        n = 1
+        while os.path.exists(stored):
+            stored = os.path.join(folder, f"{base} ({n}){ext}")
+            n += 1
+        shutil.copy2(src_path, stored)
+        size = os.path.getsize(stored)
+        cur = self.conn.execute(
+            "INSERT INTO attachments(todo_id, file_name, stored_path, file_size, summary, created_at)"
+            " VALUES(?,?,?,?,?,?)",
+            (todo_id, file_name, stored, size, summary, now_str()),
+        )
+        self.conn.commit()
+        return Attachment(id=cur.lastrowid, todo_id=todo_id, file_name=file_name,
+                          stored_path=stored, file_size=size, summary=summary,
+                          created_at=now_str())
+
+    def delete_attachment(self, attach_id: int) -> None:
+        """删除附件记录，并删除磁盘上的副本文件。"""
+        row = self.conn.execute(
+            "SELECT stored_path FROM attachments WHERE id=?", (attach_id,)
+        ).fetchone()
+        if row and os.path.isfile(row["stored_path"]):
+            try:
+                os.remove(row["stored_path"])
+            except OSError:
+                pass
+        self.conn.execute("DELETE FROM attachments WHERE id=?", (attach_id,))
+        self.conn.commit()
+
+    def set_attachment_summary(self, attach_id: int, summary: str) -> None:
+        self.conn.execute(
+            "UPDATE attachments SET summary=? WHERE id=?", (summary, attach_id)
+        )
+        self.conn.commit()
+
+    def delete_todo_attachments(self, todo_id: int) -> None:
+        """彻底删除待办时清理其全部附件（记录 + 磁盘文件 + 目录）。"""
+        for a in self.list_attachments(todo_id):
+            if os.path.isfile(a.stored_path):
+                try:
+                    os.remove(a.stored_path)
+                except OSError:
+                    pass
+        self.conn.execute("DELETE FROM attachments WHERE todo_id=?", (todo_id,))
+        self.conn.commit()
+        folder = os.path.join(attach_dir_for(self.path), str(todo_id))
+        try:
+            if os.path.isdir(folder) and not os.listdir(folder):
+                os.rmdir(folder)
+        except OSError:
+            pass
+
     # ---------- 回收站 ----------
     def list_deleted_todos(self) -> List[Todo]:
         """回收站：已软删除的待办。"""
@@ -440,12 +550,15 @@ class Database:
         self.conn.commit()
 
     def purge_todo(self, todo_id: int) -> None:
-        """彻底删除单条。"""
+        """彻底删除单条（含附件文件）。"""
+        self.delete_todo_attachments(todo_id)
         self.conn.execute("DELETE FROM todos WHERE id=?", (todo_id,))
         self.conn.commit()
 
     def purge_all_deleted(self) -> None:
-        """清空回收站。"""
+        """清空回收站（含附件文件）。"""
+        for t in self.list_deleted_todos():
+            self.delete_todo_attachments(t.id)
         self.conn.execute("DELETE FROM todos WHERE deleted=1")
         self.conn.commit()
 

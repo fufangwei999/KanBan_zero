@@ -1,6 +1,7 @@
 """主窗口：日期导航 + 三区（待办/进行中/已完成）+ 日报/周报 + AI + 全局热键召唤。"""
 import ctypes
 import os
+import threading
 from ctypes import wintypes
 from datetime import date, datetime, timedelta
 
@@ -259,11 +260,12 @@ class MainWindow(QMainWindow):
 
         data = {"todo": todo, "doing": doing, "done": done}
         sub_map = self.db.subtasks_map()
+        attach_map = self.db.attachments_map()
         for status, (title, header, lst, hint) in self._sections.items():
             todos = data[status]
             header.setText(f"{title}  ·  {len(todos)}")
             lst.current_date = date_str
-            lst.load_todos(todos, get_meta, hint, sub_map)
+            lst.load_todos(todos, get_meta, hint, sub_map, attach_map)
             lst.setFixedHeight(self._list_height(len(todos)))
         self._update_stats(todo, doing, done)
         self._apply_filter()
@@ -364,6 +366,8 @@ class MainWindow(QMainWindow):
             if todo:
                 for title, done in d["subtasks"]:
                     self.db.add_subtask(todo.id, title, done)
+                self._save_attachments(todo.id, d["attachments"])
+                self._auto_summarize_attachments(todo.id)
             self.refresh_all()
 
     def on_edit_todo(self, todo_id: int) -> None:
@@ -371,7 +375,8 @@ class MainWindow(QMainWindow):
         if not todo:
             return
         subs = self.db.list_subtasks(todo_id)
-        dlg = TodoDialog(self.db.list_categories(), todo, subtasks=subs, parent=self)
+        atts = self.db.list_attachments(todo_id)
+        dlg = TodoDialog(self.db.list_categories(), todo, subtasks=subs, attachments=atts, parent=self)
         if dlg.exec():
             d = dlg.data()
             self.db.update_todo(todo_id, d["title"], d["description"], d["priority"], d["due_date"])
@@ -379,7 +384,54 @@ class MainWindow(QMainWindow):
             self.db.clear_subtasks(todo_id)
             for title, done in d["subtasks"]:
                 self.db.add_subtask(todo_id, title, done)
+            self._save_attachments(todo_id, d["attachments"])
+            self._auto_summarize_attachments(todo_id)
             self.refresh_all()
+
+    # ---------- 附件 ----------
+    def _save_attachments(self, todo_id: int, attachments: list) -> None:
+        """对比对话框附件与库中现状：新增的复制入库，被移除的删除。
+
+        attachments 元素：
+          - 新增：{"src_path":..., "file_name":..., ...}
+          - 已有：{"id":..., "stored_path":..., ...}
+        """
+        kept_ids = set()
+        for a in attachments:
+            if a.get("id") is not None:
+                kept_ids.add(a["id"])
+            elif a.get("src_path") and os.path.isfile(a["src_path"]):
+                self.db.add_attachment(todo_id, a["src_path"])
+        for exist in self.db.list_attachments(todo_id):
+            if exist.id not in kept_ids:
+                self.db.delete_attachment(exist.id)
+
+    def _auto_summarize_attachments(self, todo_id: int) -> None:
+        """docx/txt 附件且尚无摘要 → 后台线程调 AI 生成 1-2 句精髓。
+
+        未配置模型则静默跳过；网络失败仅记日志，不打扰用户。
+        """
+        models = self.db.list_ai_models()
+        if not models:
+            return
+        model = models[0]
+        target = [a for a in self.db.list_attachments(todo_id)
+                  if not a.summary and os.path.splitext(a.file_name)[1].lower()
+                  in (".docx", ".txt", ".md", ".markdown")]
+        if not target:
+            return
+
+        def worker():
+            for a in target:
+                try:
+                    summary = ai_module.summarize_attachment(
+                        model, a.stored_path, a.file_name
+                    )
+                    self.db.set_attachment_summary(a.id, summary)
+                except Exception as e:  # 网络/模型问题不打扰用户
+                    print(f"[Zero看板] 附件 AI 总结失败: {a.file_name}: {e}")
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def on_delete_todo(self, todo_id: int) -> None:
         todo = self.db.get_todo(todo_id)
@@ -906,6 +958,8 @@ class MainWindow(QMainWindow):
                 if todo:
                     for title, done in d["subtasks"]:
                         self.db.add_subtask(todo.id, title, done)
+                    self._save_attachments(todo.id, d["attachments"])
+                    self._auto_summarize_attachments(todo.id)
                 self.refresh_all()
 
     # ------------------------------------------------------------ 清理

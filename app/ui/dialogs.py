@@ -1,4 +1,5 @@
 """各类对话框：待办编辑、分类编辑、AI 模型配置、报告展示。"""
+import os
 import threading
 from datetime import date, datetime
 
@@ -8,6 +9,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QGridLayout,
     QHBoxLayout,
@@ -32,13 +34,34 @@ COLOR_PALETTE = [
 
 
 # ---------------------------------------------------------------- 待办
+def _fmt_size(n: int) -> str:
+    """文件大小人类可读格式。"""
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n / (1024 * 1024):.1f} MB"
+
+
 class TodoDialog(QDialog):
-    def __init__(self, categories, todo: Todo = None, prefill: dict = None, subtasks=None, parent=None):
+    def __init__(self, categories, todo: Todo = None, prefill: dict = None, subtasks=None,
+                 attachments=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("编辑待办" if todo else "添加待办")
         self.setMinimumWidth(460)
         self.categories = categories
         self.subtasks = [(s.title, s.done) for s in (subtasks or [])]
+        # 附件：新增项 {"src_path":..., "file_name":..., "file_size":..., "summary":""}
+        #       已有项 {"id":..., "file_name":..., "stored_path":..., "file_size":..., "summary":...}
+        self.attachments = []
+        for a in (attachments or []):
+            self.attachments.append({
+                "id": getattr(a, "id", None),
+                "file_name": a.file_name,
+                "stored_path": getattr(a, "stored_path", ""),
+                "file_size": getattr(a, "file_size", 0),
+                "summary": getattr(a, "summary", ""),
+            })
 
         form = QFormLayout()
         self.title_edit = QLineEdit()
@@ -85,6 +108,25 @@ class TodoDialog(QDialog):
         sub_row.addWidget(del_sub_btn)
         form.addRow("", sub_row)
         self._refresh_subtasks()
+
+        # 附件
+        form.addRow("附件", QLabel("支持任意文件；docx/txt 配置 AI 后自动总结精髓"))
+        self.attach_list = QListWidget()
+        self.attach_list.setFixedHeight(96)
+        self.attach_list.setSelectionMode(QListWidget.SingleSelection)
+        form.addRow("", self.attach_list)
+        attach_row = QHBoxLayout()
+        add_attach_btn = QPushButton("＋ 添加附件")
+        add_attach_btn.clicked.connect(self._add_attachment)
+        dl_attach_btn = QPushButton("⬇ 下载")
+        dl_attach_btn.clicked.connect(self._download_attachment)
+        del_attach_btn = QPushButton("🗑 移除")
+        del_attach_btn.clicked.connect(self._remove_attachment)
+        attach_row.addWidget(add_attach_btn)
+        attach_row.addWidget(dl_attach_btn)
+        attach_row.addWidget(del_attach_btn)
+        form.addRow("", attach_row)
+        self._refresh_attachments()
 
         if todo:
             self.title_edit.setText(todo.title)
@@ -138,6 +180,7 @@ class TodoDialog(QDialog):
             "priority": self.priority_combo.currentData(),
             "due_date": self.due_edit.text().strip(),
             "subtasks": [(t, d) for t, d in self.subtasks],
+            "attachments": list(self.attachments),
         }
 
     def _refresh_subtasks(self) -> None:
@@ -168,6 +211,62 @@ class TodoDialog(QDialog):
         row = self.subtask_list.row(item)
         if 0 <= row < len(self.subtasks):
             self.subtasks[row][1] = (item.checkState() == Qt.Checked)
+
+    # ---------- 附件 ----------
+    def _refresh_attachments(self) -> None:
+        self.attach_list.clear()
+        for a in self.attachments:
+            size = _fmt_size(a.get("file_size", 0))
+            if a.get("summary"):
+                label = f"📄 {a['file_name']}  ·  {size}  ·  ✨ {a['summary']}"
+            else:
+                ext = os.path.splitext(a["file_name"])[1].lower()
+                if ext in (".docx", ".txt", ".md", ".markdown"):
+                    label = f"📄 {a['file_name']}  ·  {size}  ·  ⏳ 待 AI 总结"
+                else:
+                    label = f"📄 {a['file_name']}  ·  {size}"
+            item = QListWidgetItem(label)
+            item.setToolTip(label)
+            self.attach_list.addItem(item)
+
+    def _add_attachment(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "选择附件", "", "所有文件 (*.*)"
+        )
+        for p in paths:
+            self.attachments.append({
+                "src_path": p,
+                "file_name": os.path.basename(p),
+                "file_size": os.path.getsize(p) if os.path.isfile(p) else 0,
+                "summary": "",
+            })
+        self._refresh_attachments()
+
+    def _download_attachment(self) -> None:
+        row = self.attach_list.currentRow()
+        if not (0 <= row < len(self.attachments)):
+            QMessageBox.information(self, "提示", "请先选中一个附件")
+            return
+        a = self.attachments[row]
+        if not a.get("stored_path") or not os.path.isfile(a["stored_path"]):
+            QMessageBox.information(self, "提示", "该附件尚未保存（保存待办后即可下载）")
+            return
+        target, _ = QFileDialog.getSaveFileName(
+            self, "下载附件", a["file_name"], "所有文件 (*.*)"
+        )
+        if target:
+            try:
+                import shutil
+                shutil.copy2(a["stored_path"], target)
+                QMessageBox.information(self, "下载完成", f"已保存到：\n{target}")
+            except OSError as e:
+                QMessageBox.warning(self, "下载失败", str(e))
+
+    def _remove_attachment(self) -> None:
+        row = self.attach_list.currentRow()
+        if 0 <= row < len(self.attachments):
+            self.attachments.pop(row)
+            self._refresh_attachments()
 
 
 # ---------------------------------------------------------------- 分类

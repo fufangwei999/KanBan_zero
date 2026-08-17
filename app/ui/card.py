@@ -28,13 +28,14 @@ class CardWidget(QFrame):
     delete_requested = Signal(int)       # todo_id
 
     def __init__(self, todo: Todo, category_name: str, category_color: str,
-                 current_date: str, subtasks=None, parent=None):
+                 current_date: str, subtasks=None, attachments=None, parent=None):
         super().__init__(parent)
         self.todo = todo
         self.category_name = category_name
         self.category_color = category_color
         self.current_date = current_date  # "YYYY-MM-DD"
         self.subtasks = subtasks or []
+        self.attachments = attachments or []
         self.setObjectName("todoCard")
         self._build()
 
@@ -105,6 +106,20 @@ class CardWidget(QFrame):
             prog = QLabel(f"☑ 子任务 {done_count}/{len(self.subtasks)}")
             prog.setStyleSheet("color:#4a90d9;font-size:11px;font-weight:600;")
             inner.addWidget(prog)
+
+        # 附件信息
+        if self.attachments:
+            attach_texts = []
+            for a in self.attachments:
+                if a.summary:
+                    attach_texts.append(f"📎 {a.file_name} ✨{a.summary}")
+                else:
+                    attach_texts.append(f"📎 {a.file_name}")
+            attach_lbl = QLabel("　".join(attach_texts))
+            attach_lbl.setWordWrap(True)
+            attach_lbl.setStyleSheet("color:#8a94a6;font-size:11px;")
+            attach_lbl.setToolTip("\n".join(attach_texts))
+            inner.addWidget(attach_lbl)
 
         # 日期信息行
         info = QHBoxLayout()

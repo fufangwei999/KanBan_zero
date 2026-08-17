@@ -112,6 +112,36 @@ class DatabaseTest(unittest.TestCase):
         self.db.clear_subtasks(tid)
         self.assertEqual(self.db.list_subtasks(tid), [])
 
+    def test_attachments_crud(self):
+        cats = self.db.list_categories()
+        tid = self.db.add_todo("带附件任务", cats[0].id).id
+        # 造一个临时附件文件
+        src = tempfile.mktemp(suffix=".txt")
+        with open(src, "w", encoding="utf-8") as f:
+            f.write("这是一份测试文档内容，用于验证附件功能。")
+        try:
+            a1 = self.db.add_attachment(tid, src)
+            self.assertIsNotNone(a1)
+            self.assertTrue(os.path.isfile(a1.stored_path))
+            self.assertEqual(a1.file_name, os.path.basename(src))
+            # 附件副本在临时库目录下（隔离，不污染真实 data/）
+            self.assertIn("attachments", a1.stored_path)
+            # 同名文件 → 自动加序号不覆盖
+            a2 = self.db.add_attachment(tid, src)
+            self.assertNotEqual(a1.stored_path, a2.stored_path)
+            self.assertEqual(len(self.db.list_attachments(tid)), 2)
+            self.assertEqual(len(self.db.attachments_map().get(tid, [])), 2)
+            # 摘要更新
+            self.db.set_attachment_summary(a1.id, "精髓：测试附件。")
+            self.assertEqual(self.db.list_attachments(tid)[0].summary, "精髓：测试附件。")
+            # 删除附件（记录 + 磁盘文件）
+            self.db.delete_attachment(a1.id)
+            self.assertEqual(len(self.db.list_attachments(tid)), 1)
+            self.assertFalse(os.path.exists(a1.stored_path))
+        finally:
+            os.remove(src)
+            self.db.delete_todo_attachments(tid)
+
 
 class AiTest(unittest.TestCase):
     def test_report_prompt_sections(self):
@@ -141,6 +171,61 @@ class AiTest(unittest.TestCase):
         self.assertEqual(r["title"], "交周报")
         self.assertEqual(r["priority"], "high")
         self.assertEqual(r["due_date"], "2026-08-15")
+
+    def test_extract_text_from_txt(self):
+        src = tempfile.mktemp(suffix=".txt")
+        with open(src, "w", encoding="utf-8") as f:
+            f.write("第一行内容\n第二行内容")
+        try:
+            text = ai_module.extract_text_from_file(src, "说明.txt")
+            self.assertIn("第一行内容", text)
+            self.assertIn("第二行内容", text)
+            self.assertEqual(ai_module.extract_text_from_file(src, "图片.png"), "")
+        finally:
+            os.remove(src)
+
+    def test_extract_text_from_docx(self):
+        """现场造一个最小 docx（zip 结构），验证 <w:t> 文本提取。"""
+        import zipfile as zfmod
+
+        src = tempfile.mktemp(suffix=".docx")
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            "<w:body>"
+            "<w:p><w:r><w:t>季度总结</w:t></w:r></w:p>"
+            "<w:p><w:r><w:t>销售增长</w:t></w:r></w:p>"
+            "</w:body></w:document>"
+        )
+        with zfmod.ZipFile(src, "w") as zf:
+            zf.writestr("word/document.xml", xml)
+        try:
+            text = ai_module.extract_text_from_file(src, "报告.docx")
+            self.assertIn("季度总结", text)
+            self.assertIn("销售增长", text)
+        finally:
+            os.remove(src)
+
+    def test_summarize_attachment(self):
+        db, path = _tmp_db()
+        try:
+            m = db.add_ai_model("本地", "http://localhost:11434/v1", "ollama", "qwen3:8b")
+        finally:
+            db.close()
+            os.remove(path)
+        src = tempfile.mktemp(suffix=".txt")
+        with open(src, "w", encoding="utf-8") as f:
+            f.write("这是关于季度销售数据的文档，总结了三大区域业绩增长情况。")
+        try:
+            orig = ai_module.call_chat_completion
+            ai_module.call_chat_completion = lambda *a, **k: "本文件总结了三区域销售增长与核心业绩亮点。"
+            try:
+                summary = ai_module.summarize_attachment(m, src, "销售报告.txt")
+            finally:
+                ai_module.call_chat_completion = orig
+            self.assertIn("销售", summary)
+        finally:
+            os.remove(src)
 
 
 class UiTest(unittest.TestCase):
@@ -208,6 +293,43 @@ class UiTest(unittest.TestCase):
         dlg.subtask_list.item(0).setCheckState(Qt.Checked)
         self.assertTrue(dlg.subtasks[0][1])
         self.assertEqual(len(dlg.data()["subtasks"]), 2)
+
+    def test_todo_dialog_attachments(self):
+        from app.database import Attachment
+
+        db, path = _tmp_db()
+        try:
+            cats = db.list_categories()
+        finally:
+            db.close()
+            os.remove(path)
+        # 已有附件 + 新增附件混在对话框里
+        exist = Attachment(1, 1, "已有.docx", "C:/fake/已有.docx", 2048, "精髓：已有文档。", "2026-08-14 10:00:00")
+        dlg = TodoDialog(cats, attachments=[exist])
+        self.assertEqual(len(dlg.attachments), 1)
+        self.assertEqual(dlg.attachments[0]["id"], 1)
+        self.assertEqual(dlg.attach_list.count(), 1)
+        # 新增附件
+        src = tempfile.mktemp(suffix=".txt")
+        with open(src, "w", encoding="utf-8") as f:
+            f.write("附件内容")
+        try:
+            dlg.attachments.append({
+                "src_path": src,
+                "file_name": os.path.basename(src),
+                "file_size": 8,
+                "summary": "",
+            })
+            dlg._refresh_attachments()
+            self.assertEqual(dlg.attach_list.count(), 2)
+            self.assertEqual(len(dlg.data()["attachments"]), 2)
+            # 移除
+            dlg.attach_list.setCurrentRow(0)
+            dlg._remove_attachment()
+            self.assertEqual(len(dlg.attachments), 1)
+            self.assertEqual(dlg.attachments[0]["file_name"], os.path.basename(src))
+        finally:
+            os.remove(src)
 
     def test_calendar_view(self):
         from app.ui.calendar_view import CalendarView

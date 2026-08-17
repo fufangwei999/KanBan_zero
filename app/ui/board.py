@@ -37,7 +37,8 @@ class TodoListWidget(QListWidget):
             self.selected.emit(current.data(Qt.UserRole))
 
     # ---------- 填充 ----------
-    def load_todos(self, todos, get_meta, empty_hint: str, subtasks_map=None) -> None:
+    def load_todos(self, todos, get_meta, empty_hint: str, subtasks_map=None,
+                   attachments_map=None) -> None:
         self.clear()
         if not todos:
             item = QListWidgetItem(empty_hint)
@@ -48,11 +49,12 @@ class TodoListWidget(QListWidget):
             return
         for t in todos:
             subs = (subtasks_map or {}).get(t.id, [])
-            self.add_todo(t, get_meta, subs)
+            atts = (attachments_map or {}).get(t.id, [])
+            self.add_todo(t, get_meta, subs, atts)
 
-    def add_todo(self, todo, get_meta, subtasks=None) -> None:
+    def add_todo(self, todo, get_meta, subtasks=None, attachments=None) -> None:
         cat_name, cat_color = get_meta(todo.category_id)
-        card = CardWidget(todo, cat_name, cat_color, self.current_date, subtasks)
+        card = CardWidget(todo, cat_name, cat_color, self.current_date, subtasks, attachments)
         card.status_requested.connect(self.status_requested)
         card.edit_requested.connect(self.edit_requested)
         card.delete_requested.connect(self.delete_requested)
