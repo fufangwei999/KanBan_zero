@@ -134,10 +134,18 @@ class DatabaseTest(unittest.TestCase):
             # 摘要更新
             self.db.set_attachment_summary(a1.id, "精髓：测试附件。")
             self.assertEqual(self.db.list_attachments(tid)[0].summary, "精髓：测试附件。")
-            # 删除附件（记录 + 磁盘文件）
+            # 删除附件（记录 + 磁盘文件 + 空目录）
             self.db.delete_attachment(a1.id)
             self.assertEqual(len(self.db.list_attachments(tid)), 1)
             self.assertFalse(os.path.exists(a1.stored_path))
+            # 目录此时还有 a2，不应被删
+            folder = os.path.dirname(a2.stored_path)
+            self.assertTrue(os.path.isdir(folder))
+            self.assertTrue(os.path.isfile(a2.stored_path))
+            # 删掉最后一个附件 → 目录应被清理
+            self.db.delete_attachment(a2.id)
+            self.assertFalse(os.path.isdir(folder))
+            self.assertEqual(self.db.list_attachments(tid), [])
         finally:
             os.remove(src)
             self.db.delete_todo_attachments(tid)

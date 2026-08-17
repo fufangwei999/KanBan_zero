@@ -18,8 +18,13 @@ ATTACH_DIR = os.path.join(DATA_DIR, "attachments")
 
 
 def attach_dir_for(db_path: str) -> str:
-    """附件根目录跟随数据库文件（测试用临时库时自动隔离到临时目录）。"""
-    return os.path.join(os.path.dirname(os.path.abspath(db_path)), "attachments")
+    """附件根目录跟随数据库文件名（不同库互不干扰，测试天然隔离）。
+
+    data/kanban.db      → data/kanban_attachments/
+    Temp/xxx123.db      → Temp/xxx123_attachments/
+    """
+    base = os.path.splitext(os.path.basename(os.path.abspath(db_path)))[0]
+    return os.path.join(os.path.dirname(os.path.abspath(db_path)), f"{base}_attachments")
 
 
 def now_str() -> str:
@@ -521,17 +526,27 @@ class Database:
                           created_at=now_str())
 
     def delete_attachment(self, attach_id: int) -> None:
-        """删除附件记录，并删除磁盘上的副本文件。"""
+        """删除附件记录，并删除磁盘上的副本文件（及空目录）。"""
         row = self.conn.execute(
-            "SELECT stored_path FROM attachments WHERE id=?", (attach_id,)
+            "SELECT todo_id, stored_path FROM attachments WHERE id=?", (attach_id,)
         ).fetchone()
-        if row and os.path.isfile(row["stored_path"]):
-            try:
-                os.remove(row["stored_path"])
-            except OSError:
-                pass
+        folder = None
+        if row:
+            folder = os.path.dirname(row["stored_path"])
+            if os.path.isfile(row["stored_path"]):
+                try:
+                    os.remove(row["stored_path"])
+                except OSError:
+                    pass
         self.conn.execute("DELETE FROM attachments WHERE id=?", (attach_id,))
         self.conn.commit()
+        # 清理空目录
+        if folder and os.path.isdir(folder):
+            try:
+                if not os.listdir(folder):
+                    os.rmdir(folder)
+            except OSError:
+                pass
 
     def set_attachment_summary(self, attach_id: int, summary: str) -> None:
         self.conn.execute(
